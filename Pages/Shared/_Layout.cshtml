@@ -1,0 +1,336 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@ViewData["Title"] - bookloader</title>
+    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/bootbook.styles.css" asp-append-version="true" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.5.207/pdf.js"> </script>
+    <script async src="~/js/opencv.js"> </script>
+
+    <script>
+
+            document.addEventListener('DOMContentLoaded', function(){ // Аналог $(document).ready(function(){
+
+          var pdfDoc = null,
+              pageNum = 1,
+              pageRendering = false,
+              pageNumPending = null,
+              scale = 0.8,
+              canvas = document.getElementById('pdfCanvas'),
+              ctx = canvas.getContext('2d');
+
+              /*Offical release of the pdfjs worker*/
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.5.207/pdf.worker.js';
+        document.getElementById('file').onchange = function(event) {
+          var file = event.target.files[0];
+          var fileReader = new FileReader();
+          fileReader.onload = function() {
+            var typedarray = new Uint8Array(this.result);
+            console.log(typedarray);
+            const loadingTask = pdfjsLib.getDocument(typedarray);
+            loadingTask.promise.then(pdf => {
+
+              pdfDoc = pdf;
+            document.getElementById('page_count').textContent = pdfDoc.numPages;
+
+
+              // The document is loaded here...
+              //This below is just for demonstration purposes showing that it works with the moderen api
+              pdf.getPage(1).then(function(page) {
+                console.log('Page loaded');
+
+                scale = 1.5;
+                var viewport = page.getViewport({
+                  scale: scale
+                });
+
+                canvas = document.getElementById('pdfCanvas');
+                context = canvas.getContext('2d');
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+
+                // Render PDF page into canvas context
+                var renderContext = {
+                  canvasContext: context,
+                  viewport: viewport
+                };
+                var renderTask = page.render(renderContext);
+                renderTask.promise.then(function() {
+                  console.log('Page rendered');
+                });
+
+              });
+              //end of example code
+            });
+
+          }
+          fileReader.readAsArrayBuffer(file);
+        }
+
+         /**
+           * Get page info from document, resize canvas accordingly, and render page.
+           *
+           */
+          async function renderPage(num) {
+            pageRendering = true;
+            // Using promise to fetch the page
+            await pdfDoc.getPage(num).then(async function(page) {
+              var viewport = page.getViewport({scale: scale});
+              canvas.height = viewport.height;
+              canvas.width = viewport.width;
+
+              // Render PDF page into canvas context
+              var renderContext = {
+                canvasContext: ctx,
+                viewport: viewport
+              };
+              var renderTask = page.render(renderContext);
+
+              // Wait for rendering to finish
+              await renderTask.promise.then(async function() {
+
+            let mat=cv.imread('pdfCanvas');
+                          cv.resize(mat, mat,  new cv.Size(600,448*2),0,0, cv.INTER_NEAREST );
+            cv.cvtColor(mat, mat, cv.COLOR_BGR2GRAY, 0);
+          cv.threshold(mat, mat, 200, 255, cv.THRESH_BINARY);
+            let rect = new cv.Rect(0, 0, mat.cols,mat.rows/2);
+            let rect2 = new cv.Rect(0, mat.rows/2, mat.cols,mat.rows/2);
+            let mat2 = mat.roi(rect);
+            let mat3 = mat.roi(rect2);
+
+
+                        cv.imshow('canvasOutput', mat2);
+                        cv.imshow('canvasOutput2', mat3);
+          mat.delete();
+
+                pageRendering = false;
+                if (pageNumPending !== null) {
+                  // New page rendering is pending
+                               await renderPage(pageNumPending);
+                  pageNumPending = null;
+                }
+              });
+            });
+
+            // Update page counters
+            document.getElementById('page_num').textContent = num;
+
+          }
+
+
+        /**
+           * If another page rendering in progress, waits until the rendering is
+           * finised. Otherwise, executes rendering immediately.
+           */
+         async function queueRenderPage(num) {
+            if (pageRendering) {
+              pageNumPending = num;
+            } else {
+              await renderPage(num);
+            }
+          }
+        /**
+           * Displays previous page.
+           */
+          function onPrevPage() {
+            if (pageNum <= 1) {
+              return;
+            }
+            pageNum--;
+            queueRenderPage(pageNum);
+          }
+          document.getElementById('prev').addEventListener('click', onPrevPage);
+
+          /**
+           * Displays next page.
+           */
+         async function onNextPage() {
+            if (pageNum >= pdfDoc.numPages) {
+              return;
+            }
+            pageNum++;
+          await  queueRenderPage(pageNum);
+          }
+          document.getElementById('next').addEventListener('click', onNextPage);
+
+        longToByteArray = function(/*long*/long) {
+            // we want to represent the input as a 8-bytes array
+            var byteArray = [0, 0, 0, 0, 0, 0, 0, 0];
+
+            for ( var index = 0; index < byteArray.length; index ++ ) {
+                var byte = long & 0xff;
+                byteArray [ index ] = byte;
+                long = (long - byte) / 256 ;
+            }
+
+            return byteArray;
+        };
+
+         /**
+           * download  page.
+           */
+         async function onDownload() {
+
+        let stride=76;
+        let size=448*stride;
+
+        let maxPage=pdfDoc.numPages-pageNum-1;
+        var bytes3=new Uint8Array(12+size*maxPage*2);
+
+        for(let pp=0;pp<maxPage;pp++){
+
+          if(pp==maxPage)
+            break;
+
+          let canvases=['canvasOutput','canvasOutput2'];
+          for(let canvasId=0;canvasId<2;canvasId++){
+            let canvas = document.getElementById(canvases[canvasId]);
+              let  context = canvas.getContext('2d');
+              let data=context .getImageData(0,0,canvas.width,canvas.height);
+
+              var bytes =data.data;
+              var bytes2 = new Uint8Array(bytes.length/4); // pass your byte response to this constructor
+              for(let i=0;i<bytes2.length;i++){
+                bytes2[i]=bytes[i*4];
+              }
+
+              let index=0;
+
+              for(let i=0;i<size;i++)
+              {
+                let byte=0;
+
+                  for(let j=0;j<8;j++)
+                  {
+                  if(bytes2[i*8+j]!=0x0)
+                        byte|=(1<<(7-j));
+                  }
+                  if(i%75==0 && i!=0){
+                    index++;
+                  }
+                  bytes3[index+12+(pp*2+canvasId)*size]=byte;
+                  index++;
+                }
+              }
+          await onNextPage();
+        }
+
+
+
+        bytes3[0]=0x43;
+        bytes3[1]=0x42;
+        bytes3[2]=0x0;
+        bytes3[3]=0x0;//format
+
+        bytes3[4]=(maxPage*2)&0xff;
+        bytes3[5]=((maxPage*2)>>8)&0xff;
+
+        bytes3[8]=0x58;
+        bytes3[9]=0x02;
+        bytes3[10]=0xc0;
+        bytes3[11]=0x01;
+              var blob=new Blob([bytes3], {type: "application/octet-stream"});// change resultByte to bytes
+              var link=document.createElement('a');
+              link.href=window.URL.createObjectURL(blob);
+              link.download="test.cb";
+              link.click();
+          }
+          document.getElementById('download').addEventListener('click', onDownload);
+
+        });
+
+    </script>
+</head>
+<body>
+    <header>
+        <nav class="navbar navbar-expand-sm navbar-toggleable-sm navbar-light bg-white border-bottom box-shadow mb-3">
+            <div class="container">
+                <a class="navbar-brand" asp-area="" asp-page="/Index">bookloader</a>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target=".navbar-collapse" aria-controls="navbarSupportedContent"
+                        aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <div class="navbar-collapse collapse d-sm-inline-flex justify-content-between">
+                    <ul class="navbar-nav flex-grow-1">
+                        <li class="nav-item">
+                            <a class="nav-link text-dark" asp-area="" asp-page="/Index">Home</a>
+                        </li>
+                        
+                    </ul>
+                </div>
+            </div>
+        </nav>
+    </header>
+    <div class="container">
+        <main role="main" class="pb-3">
+            @RenderBody()
+        </main>
+    </div>
+
+
+    <script src="~/lib/jquery/dist/jquery.min.js"></script>
+    <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="~/js/site.js" asp-append-version="true"></script>
+
+    @await RenderSectionAsync("Scripts", required: false)
+
+    <input type="file" id="file">
+    <h2>Rendered pdf:</h2>
+
+    <div>
+        <button id="prev">Previous</button>
+        <button id="next">Next</button>
+        <button id="download">download</button>
+        &nbsp; &nbsp;
+        <span>Page: <span id="page_num"></span> / <span id="page_count"></span></span>
+    </div>
+
+    <canvas id="pdfCanvas" width="300" height="300"></canvas>
+
+    <p id="status">OpenCV.js is loading...</p>
+    <div>
+        <div class="inputoutput">
+            <img id="imageSrc" alt="No Image" />
+
+        </div>
+        <div class="inputoutput">
+            <canvas id="canvasOutput"></canvas>
+            <canvas id="canvasOutput2"></canvas>
+            <div class="caption">canvasOutput</div>
+        </div>
+    </div>
+    <script type="text/javascript">
+        let imgElement = document.getElementById('imageSrc');
+        let inputElement = document.getElementById('fileInput');
+        inputElement.addEventListener('change', (e) => {
+          imgElement.src = URL.createObjectURL(e.target.files[0]);
+        }, false);
+        imgElement.onload = function() {
+          //let mat = cv.imread(imgElement);
+          let mat=cv.imread('pdfCanvas')
+          cv.resize(mat, mat,  new cv.Size(600,448*2),0,0, cv.INTER_NEAREST );
+          cv.cvtColor(mat, mat, cv.COLOR_BGR2GRAY, 0);
+          cv.threshold(mat, mat, 200, 255, cv.THRESH_BINARY);
+          cv.imshow('canvasOutput', mat);
+          mat.delete();
+        };
+        var Module = {
+          // https://emscripten.org/docs/api_reference/module.html#Module.onRuntimeInitialized
+          onRuntimeInitialized() {
+            document.getElementById('status').innerHTML = 'OpenCV.js is ready.';
+          }
+        };
+    </script>
+
+
+
+    <footer class="border-top footer text-muted">
+        <div class="container">
+            &copy; 2025 - bookloader -
+        </div>
+    </footer>
+</body>
+</html>
