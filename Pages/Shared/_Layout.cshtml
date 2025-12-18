@@ -11,6 +11,11 @@
     <script async src="~/js/opencv.js"> </script>
 
     <script>
+          let pageWidth=648;
+          let pageHeigth=480;
+            let stride = 4 * Math.trunc(Math.ceil(pageWidth / 8 / 4.0));//aligned 4
+
+        let pageSize=pageHeigth*stride;
 
             document.addEventListener('DOMContentLoaded', function(){ // Аналог $(document).ready(function(){
 
@@ -32,7 +37,7 @@
             console.log(typedarray);
             const loadingTask = pdfjsLib.getDocument(typedarray);
             loadingTask.promise.then(pdf => {
-
+              pageNum=1;
               pdfDoc = pdf;
             document.getElementById('page_count').textContent = pdfDoc.numPages;
 
@@ -88,22 +93,82 @@
                 viewport: viewport
               };
               var renderTask = page.render(renderContext);
+                      function findNonZeroManual(src) {
+            if (src.channels() !== 1) {
+                console.error("findNonZeroManual only works with single-channel images.");
+                return [];
+            }
 
+            // Access the raw pixel data
+            const data = src.data; // This is a Uint8Array for CV_8UC1 type
+            const rows = src.rows;
+            const cols = src.cols;
+            const points = [];
+
+            // Iterate over all pixels
+            for (let i = 0; i < rows; i++) {
+                for (let j = 0; j < cols; j++) {
+                    // Calculate the index in the 1D data array
+                    // Since it's single channel, the index is (i * cols + j)
+                    const index = i * cols + j;
+
+                    // Check if the pixel value is non-zero
+                    if (data[index] !== 0) {
+                        // Store the coordinates as an object or cv.Point (if available)
+                        // Note: using an array of objects here for simplicity,
+                        // you can create cv.Point objects if needed for other cv functions.
+                        //points.push({ x: j, y: i });
+                        // If using cv.Point, ensure you manage memory
+                         points.push(new cv.Point(j, i));
+                    }
+                }
+            }
+
+            return points;
+        }
+
+        function trimPage(sourceMat){
+                let inv = new cv.Mat(); // Allocate memory for the destination image
+
+                    cv.bitwise_not(sourceMat, inv);
+              cv.threshold(inv, inv, 200, 255, cv.THRESH_BINARY);
+               let nonZeroCoords = new cv.Mat();
+
+               nonZeroCoords= findNonZeroManual(inv);
+
+               let mattt = new cv.Mat(nonZeroCoords.length, 1, cv.CV_32SC2);
+
+        // 2. Populate the Mat with points from the JS array.
+        for (let i = 0; i < nonZeroCoords.length; i++) {
+            mattt.data32S[i * 2] = nonZeroCoords[i].x;
+            mattt.data32S[i * 2 + 1] = nonZeroCoords[i].y;
+        }
+
+                   var bound = cv.boundingRect(mattt);
+               if (!(bound.width == 0 || bound.height == 0)){
+
+                      let roi = sourceMat.roi(bound);
+                           return roi;
+               }
+                   return sourceMat;
+            }
               // Wait for rendering to finish
               await renderTask.promise.then(async function() {
 
             let mat=cv.imread('pdfCanvas');
-                          cv.resize(mat, mat,  new cv.Size(600,448*2),0,0, cv.INTER_NEAREST );
-            cv.cvtColor(mat, mat, cv.COLOR_BGR2GRAY, 0);
+             cv.cvtColor(mat, mat, cv.COLOR_BGR2GRAY, 0);
+            mat=trimPage(mat);
+                          cv.resize(mat, mat,  new cv.Size(pageWidth,pageHeigth*2),0,0, cv.INTER_NEAREST );
+            //cv.cvtColor(mat, mat, cv.COLOR_BGR2GRAY, 0);
           cv.threshold(mat, mat, 200, 255, cv.THRESH_BINARY);
             let rect = new cv.Rect(0, 0, mat.cols,mat.rows/2);
             let rect2 = new cv.Rect(0, mat.rows/2, mat.cols,mat.rows/2);
             let mat2 = mat.roi(rect);
             let mat3 = mat.roi(rect2);
 
-
                         cv.imshow('canvasOutput', mat2);
                         cv.imshow('canvasOutput2', mat3);
+
           mat.delete();
 
                 pageRendering = false;
@@ -173,11 +238,32 @@
            * download  page.
            */
          async function onDownload() {
+                  const checkbox = document.getElementById("pagesLimitCheckBox");
+                  const textbox = document.getElementById("pagesLimit");
+                  const textbox1 = document.getElementById("pageWidth");
+                  const textbox2 = document.getElementById("pageHeigth");
+                     pageWidth=parseInt(textbox1.value);
+           pageHeigth=parseInt(textbox2.value);
+             stride = 4 * Math.trunc(Math.ceil(pageWidth / 8 / 4.0));//aligned 4
 
-        let stride=76;
-        let size=448*stride;
+
+        let pageSize=pageHeigth*stride;
+                  let pagesLimitEnabled=false;
+                  let pagesLimit=parseInt(textbox.value);
+        if (checkbox.checked) {
+            pagesLimitEnabled=true;
+        }
+
+
+
+
+        let size=pageSize;
 
         let maxPage=pdfDoc.numPages-pageNum-1;
+
+        if(pagesLimitEnabled)
+            maxPage=Math.min(maxPage,pagesLimit);
+
         var bytes3=new Uint8Array(12+size*maxPage*2);
 
         for(let pp=0;pp<maxPage;pp++){
@@ -208,10 +294,10 @@
                   if(bytes2[i*8+j]!=0x0)
                         byte|=(1<<(7-j));
                   }
-                  if(i%75==0 && i!=0){
+                  if(i%(stride-1)==0 && i!=0){
                     index++;
                   }
-                  bytes3[index+12+(pp*2+canvasId)*size]=byte;
+                  bytes3[index+12+(pp*2+canvasId)*size]=~byte;
                   index++;
                 }
               }
@@ -222,16 +308,16 @@
 
         bytes3[0]=0x43;
         bytes3[1]=0x42;
-        bytes3[2]=0x0;
+        bytes3[2]=0x1;
         bytes3[3]=0x0;//format
 
         bytes3[4]=(maxPage*2)&0xff;
         bytes3[5]=((maxPage*2)>>8)&0xff;
 
-        bytes3[8]=0x58;
-        bytes3[9]=0x02;
-        bytes3[10]=0xc0;
-        bytes3[11]=0x01;
+        bytes3[8]=(pageWidth*2)&0xff;
+        bytes3[9]=((pageWidth*2)>>8)&0xff;;
+        bytes3[10]=(pageHeigth*2)&0xff;
+        bytes3[11]=((pageHeigth*2)>>8)&0xff;
               var blob=new Blob([bytes3], {type: "application/octet-stream"});// change resultByte to bytes
               var link=document.createElement('a');
               link.href=window.URL.createObjectURL(blob);
@@ -258,7 +344,7 @@
                         <li class="nav-item">
                             <a class="nav-link text-dark" asp-area="" asp-page="/Index">Home</a>
                         </li>
-                        
+
                     </ul>
                 </div>
             </div>
@@ -283,7 +369,24 @@
     <div>
         <button id="prev">Previous</button>
         <button id="next">Next</button>
+        <div>
+            <label for="subscribe">Limit pages</label>
+            <input type="checkbox" id="pagesLimitCheckBox" name="subscribe" value="yes">
+            <input type="text" id="pagesLimit" value="10">
+        </div><div>
+            <p>
+                page width:
+                <input type="text" id="pageWidth" value="648">
+            </p>
+            <p>
+                page height:
+                <input type="text" id="pageHeigth" value="480">
+            </p>
+
+        </div>
+
         <button id="download">download</button>
+
         &nbsp; &nbsp;
         <span>Page: <span id="page_num"></span> / <span id="page_count"></span></span>
     </div>
@@ -311,7 +414,7 @@
         imgElement.onload = function() {
           //let mat = cv.imread(imgElement);
           let mat=cv.imread('pdfCanvas')
-          cv.resize(mat, mat,  new cv.Size(600,448*2),0,0, cv.INTER_NEAREST );
+          cv.resize(mat, mat,  new cv.Size(pageWidth,pageHeigth*2),0,0, cv.INTER_NEAREST );
           cv.cvtColor(mat, mat, cv.COLOR_BGR2GRAY, 0);
           cv.threshold(mat, mat, 200, 255, cv.THRESH_BINARY);
           cv.imshow('canvasOutput', mat);
