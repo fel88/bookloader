@@ -156,7 +156,9 @@
               await renderTask.promise.then(async function() {
 
             let mat=cv.imread('pdfCanvas');
-             cv.cvtColor(mat, mat, cv.COLOR_BGR2GRAY, 0);
+       
+                 cv.cvtColor(mat, mat, cv.COLOR_BGR2GRAY, 0);
+
             mat=trimPage(mat);
                           cv.resize(mat, mat,  new cv.Size(pageWidth,pageHeigth*2),0,0, cv.INTER_NEAREST );
             //cv.cvtColor(mat, mat, cv.COLOR_BGR2GRAY, 0);
@@ -245,7 +247,7 @@
                      pageWidth=parseInt(textbox1.value);
            pageHeigth=parseInt(textbox2.value);
              stride = 4 * Math.trunc(Math.ceil(pageWidth / 8 / 4.0));//aligned 4
-
+             let realStride=pageWidth / 8;
 
         let pageSize=pageHeigth*stride;
                   let pagesLimitEnabled=false;
@@ -294,8 +296,8 @@
                   if(bytes2[i*8+j]!=0x0)
                         byte|=(1<<(7-j));
                   }
-                  if(i%(stride-1)==0 && i!=0){
-                    index++;
+                  if(i%realStride==0 && i!=0){
+                    index+=stride-realStride;
                   }
                   bytes3[index+12+(pp*2+canvasId)*size]=~byte;
                   index++;
@@ -314,10 +316,10 @@
         bytes3[4]=(maxPage*2)&0xff;
         bytes3[5]=((maxPage*2)>>8)&0xff;
 
-        bytes3[8]=(pageWidth*2)&0xff;
-        bytes3[9]=((pageWidth*2)>>8)&0xff;;
-        bytes3[10]=(pageHeigth*2)&0xff;
-        bytes3[11]=((pageHeigth*2)>>8)&0xff;
+        bytes3[8]=(pageWidth)&0xff;
+        bytes3[9]=((pageWidth)>>8)&0xff;;
+        bytes3[10]=(pageHeigth)&0xff;
+        bytes3[11]=((pageHeigth)>>8)&0xff;
               var blob=new Blob([bytes3], {type: "application/octet-stream"});// change resultByte to bytes
               var link=document.createElement('a');
               link.href=window.URL.createObjectURL(blob);
@@ -362,8 +364,8 @@
     <script src="~/js/site.js" asp-append-version="true"></script>
 
     @await RenderSectionAsync("Scripts", required: false)
-
-    <input type="file" id="file">
+    <!--<p><input type="url" id="website" name="website" placeholder="https://example.com" required /></p>-->
+    <p><input type="file" id="file"></p>
     <h2>Rendered pdf:</h2>
 
     <div>
@@ -390,9 +392,10 @@
         &nbsp; &nbsp;
         <span>Page: <span id="page_num"></span> / <span id="page_count"></span></span>
     </div>
-
     <canvas id="pdfCanvas" width="300" height="300"></canvas>
 
+        
+        
     <p id="status">OpenCV.js is loading...</p>
     <div>
         <div class="inputoutput">
@@ -401,7 +404,9 @@
         </div>
         <div class="inputoutput">
             <canvas id="canvasOutput"></canvas>
-            <canvas id="canvasOutput2"></canvas>
+                <canvas id="canvasOutput2"></canvas>
+
+
             <div class="caption">canvasOutput</div>
         </div>
     </div>
